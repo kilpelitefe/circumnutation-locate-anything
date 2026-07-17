@@ -1,22 +1,37 @@
 """
-2. ADIM: locate-anything kutularini bitkilere ata ve DB ile dogrula.
-Her fide origin'ine en yakin kutu-merkezini ata (max yaricap icinde).
-Kutu merkezi = o fidenin izlenen noktasi.
+STEP 2 of the locate-anything EVALUATION: assign boxes to plants and score against the
+hand-annotated ground truth.
+
+For each seedling, take the box center nearest to its origin (within a maximum radius);
+that box center is the plant's tracked point. Coverage = fraction of (plant, frame) pairs
+where a box was found at all.
+
+This is the script that produced the headline evaluation numbers: coverage 27% (distilled)
+/ 19% (nutrient), error 18-27 px. See RESULTS.md Part B.
+
+Data (Circumnutation Tracker sample set, Stolarz et al. 2014) is not redistributed here.
+Point CT_DATA at the directory containing the .db files:
+    set CT_DATA=C:\\path\\to\\Circumnutation Tracker samples
+
+Input: data/la_boxes/*.json  (produced by la_detect.py)
 """
-import os, json, glob, sqlite3
+import os, json, glob, sqlite3, sys
 import numpy as np
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-BOXDIR = os.path.join(BASE, "test_out", "la_boxes")
+BOXDIR = os.path.join(BASE, "data", "la_boxes")
+CT_DATA = os.environ.get("CT_DATA", "")
 H, W = 576, 768
-MAXR = 55   # atama icin max origin-kutu mesafesi (px)
+MAXR = 55   # max origin-to-box distance for assignment (px)
 
 DBS = {
-    "distilled water":   r"C:\Users\kilpe\AppData\Local\Temp\claude\C--Users-kilpe-OneDrive-Masa-st--AOI\38061a1a-d683-492d-9fc8-60bd22ef4dc2\scratchpad\extracted\circumnutation\Circumnutation Tracker samples\distiled water.db",
-    "nutrient solution": r"C:\Users\kilpe\AppData\Local\Temp\claude\C--Users-kilpe-OneDrive-Masa-st--AOI\38061a1a-d683-492d-9fc8-60bd22ef4dc2\scratchpad\extracted\circumnutation\Circumnutation Tracker samples\nutrient solution.db",
+    "distilled water":   "distiled water.db",     # (sic) original filename is misspelled
+    "nutrient solution": "nutrient solution.db",
 }
 
 def load_db(db):
+    """Ground truth. NOTE the coordinate convention: the DB stores y as Y-UP offsets from
+    the plant origin, so image_y = H - (yorigin + y)."""
     c = sqlite3.connect(db).cursor()
     org = {r[0]: (r[1], r[2], r[3]) for r in c.execute("SELECT id,name,xorigin,yorigin FROM plants")}
     gt = {pid: {} for pid in org}
@@ -35,7 +50,7 @@ def box_centers(fr):
     return np.array(out) if out else np.empty((0, 2))
 
 def assign(origin_img, centers, prev=None):
-    """origin'e (ya da onceki noktaya) en yakin kutu-merkezi, MAXR icinde."""
+    """Box center nearest to the origin (or to the previous point), within MAXR."""
     if centers is None or len(centers) == 0: return None
     ref = prev if prev is not None else origin_img
     d = np.linalg.norm(centers - ref, axis=1)
@@ -43,9 +58,17 @@ def assign(origin_img, centers, prev=None):
     return centers[i] if d[i] <= MAXR else None
 
 def main():
+    if not CT_DATA or not os.path.isdir(CT_DATA):
+        sys.exit("Set CT_DATA to the 'Circumnutation Tracker samples' directory "
+                 "(contains the .db files). See the module docstring.")
     frames = sorted(int(os.path.basename(f)[1:5]) for f in glob.glob(os.path.join(BOXDIR, "f*.json")))
-    print(f"islenen kareler: {frames}\n")
-    for treat, db in DBS.items():
+    if not frames:
+        sys.exit(f"No detection boxes in {BOXDIR}. Run la_detect.py first.")
+    print(f"frames processed: {frames}\n")
+    for treat, fname in DBS.items():
+        db = os.path.join(CT_DATA, fname)
+        if not os.path.exists(db):
+            print(f"{treat:20s}: {fname} not found, skipping"); continue
         org, gt = load_db(db)
         errs, hits, tot = [], 0, 0
         for pid, (nm, ox, oy) in org.items():
@@ -58,10 +81,12 @@ def main():
                 if p is None: continue
                 hits += 1
                 errs.append(np.hypot(p[0]-g[0], p[1]-g[1]))
-        cov = 100*hits/tot if tot else 0
-        print(f"{treat:20s}: kapsam {hits}/{tot} ({cov:.0f}%), "
-              f"hata ort {np.mean(errs):.1f}px medyan {np.median(errs):.1f}" if errs
-              else f"{treat}: hic atama yok")
+        if errs:
+            cov = 100*hits/tot if tot else 0
+            print(f"{treat:20s}: coverage {hits}/{tot} ({cov:.0f}%), "
+                  f"error mean {np.mean(errs):.1f} px, median {np.median(errs):.1f} px")
+        else:
+            print(f"{treat:20s}: nothing assigned")
 
 if __name__ == "__main__":
     main()

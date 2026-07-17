@@ -1,19 +1,41 @@
 """
-Circumnutation apex izleyici (klasik CV).
-Yontem: her bitki icin origin cevresinden crop -> Otsu ters esikleme ->
-en buyuk koyu kontur (fide govdesi) -> centroid = izlenen nokta.
-DB (elle takip) ile ~9px ortalama hata. ~10 sn / 757 kare / 8 bitki.
+Classical-CV seedling tracker (the reference method for Part B).
 
-Cikti: test_out/cv_tracks.npz  (pid -> Nx2 goruntu-koordinat dizisi + frame)
+Method: for each plant, crop a window around its known origin -> Otsu inverse threshold ->
+pick the largest dark contour (the seedling body) -> its centroid is the tracked point.
+
+Achieves ~9 px mean error against the hand-annotated DB, over 757 frames x 8 plants in
+~10 seconds — which is what put locate-anything's 19-27% coverage / 18-27 px error /
+~17 hours into context. See RESULTS.md Part B.
+
+Data (Circumnutation Tracker sample set, Stolarz et al. 2014) is not redistributed here.
+Point CT_DATA at the directory containing the video and .db files:
+    set CT_DATA=C:\\path\\to\\Circumnutation Tracker samples
+
+Output: data/cv_tracks.npz  (per plant: Nx2 array of image coordinates)
 """
-import sqlite3, cv2, numpy as np
+import sqlite3, cv2, os, sys, numpy as np
 
-DB  = r"C:\Users\kilpe\AppData\Local\Temp\claude\C--Users-kilpe-OneDrive-Masa-st--AOI\38061a1a-d683-492d-9fc8-60bd22ef4dc2\scratchpad\extracted\circumnutation\Circumnutation Tracker samples\distiled water.db"
-VID = r"C:\Users\kilpe\AppData\Local\Temp\claude\C--Users-kilpe-OneDrive-Masa-st--AOI\38061a1a-d683-492d-9fc8-60bd22ef4dc2\scratchpad\extracted\circumnutation\Circumnutation Tracker samples\Video 1.avi"
+BASE = os.path.dirname(os.path.abspath(__file__))
+CT_DATA = os.environ.get("CT_DATA", "")
+DB  = os.path.join(CT_DATA, "distiled water.db")   # (sic) original filename is misspelled
+VID = os.path.join(CT_DATA, "Video 1.avi")
 H, W = 576, 768
-HALF = 55
+HALF = 55        # crop half-size; 55 was optimal (40/45/50/55 were swept)
+
+def _check_data():
+    if not CT_DATA or not os.path.exists(DB) or not os.path.exists(VID):
+        sys.exit("Set CT_DATA to the 'Circumnutation Tracker samples' directory "
+                 "(must contain 'Video 1.avi' and 'distiled water.db'). "
+                 "See the module docstring.")
 
 def load_origins_gt():
+    """Plant origins and ground truth.
+
+    NOTE the coordinate convention: the DB stores y as Y-UP offsets from the plant origin,
+    so image_y = H - (yorigin + y). This was verified by overlaying DB points on frames.
+    """
+    _check_data()
     con = sqlite3.connect(DB); c = con.cursor()
     org = {r[0]: (r[1], r[2]) for r in c.execute("SELECT id,xorigin,yorigin FROM plants")}
     gt = {pid: {} for pid in org}
@@ -25,14 +47,16 @@ def detect_centroid(crop, base):
     g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     b = cv2.GaussianBlur(g, (5, 5), 0)
     _, th = cv2.threshold(b, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    th[g > 190] = 0                                   # parlak etiket yazisini ele
+    th[g > 190] = 0                                   # drop the bright burned-in label text
     th = cv2.morphologyEx(th, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     cs, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     cs = [k for k in cs if cv2.contourArea(k) > 25]
     if not cs:
         return None
     bx, by = base
-    # buyuk & tabana yakin konturu sec (komsu fideyi disla)
+    # Prefer a contour that is both large and close to the base, which excludes the
+    # neighbouring seedling. NOTE: "farthest contour point from the base" (i.e. the apex)
+    # was tried and is much worse (59-79 px) — it jumps to neighbours and noise.
     k = max(cs, key=lambda c: cv2.contourArea(c) /
             (1 + np.linalg.norm(c.reshape(-1, 2) - [bx, by], axis=1).min()))
     M = cv2.moments(k)
@@ -56,6 +80,8 @@ def track_all():
 
 if __name__ == "__main__":
     org, gt, tracks = track_all()
-    np.savez(r"test_out\cv_tracks.npz",
+    os.makedirs(os.path.join(BASE, "data"), exist_ok=True)
+    np.savez(os.path.join(BASE, "data", "cv_tracks.npz"),
              **{f"p{pid}": tracks[pid] for pid in tracks})
-    print("izlendi:", {pid: len(v) for pid, v in tracks.items()})
+    print("tracked:", {pid: len(v) for pid, v in tracks.items()})
+    print("saved data/cv_tracks.npz")
