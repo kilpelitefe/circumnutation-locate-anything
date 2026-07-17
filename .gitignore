@@ -1,0 +1,33 @@
+# Model agirliklari (~6.3 GB) - HuggingFace'ten indirilir, bkz. README
+models/
+*.gguf
+
+# Video verileri - Wikimedia Commons'tan indirilir, bkz. README
+data_wiki/
+*.webm
+*.ogv
+*.avi
+*.mp4
+
+# Cikarilan kareler (videodan yeniden uretilebilir, buyuk)
+**/det_frames/
+**/la_frames/
+**/frames/
+**/cand/
+**/petest/
+*.jpg
+
+# Derleme ciktilari (locate-anything.cpp ayri klonlanir)
+build/
+third_party/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Isletim sistemi
+Thumbs.db
+.DS_Store
+desktop.ini
