@@ -1,6 +1,6 @@
 # Plant Motion Tracking — Point-Based Localization with locate-anything
 
-> ## 🚧 Status: WORK IN PROGRESS
+> ##  Status: WORK IN PROGRESS
 > This project is under active development. A working pipeline and validated results exist,
 > but the primary goal — capturing **circumnutation** with locate-anything — has not yet
 > been fully achieved. Current step: selecting a more suitable time-lapse dataset.
